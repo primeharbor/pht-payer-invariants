@@ -1,5 +1,7 @@
 # pht-payer-invariants
-Security Invariants for your payer account
+Security Invariants for your payer account.
+
+This is the code for the blog post [Implementing Security Invariants in an AWS Management Account](https://chrisfarris.com/post/payer-invariants)
 
 ## What this does
 
