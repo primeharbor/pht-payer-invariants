@@ -1,0 +1,196 @@
+# Copyright 2024 Chris Farris <chris@primeharbor.com>
+#
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+#     http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+#
+# Mostly created by ChatGPT
+#
+# Prompts Summary:
+# 1. Created a CloudFormation template with a Lambda function, IAM Role, and EventBridge rule to enforce permission boundaries.
+# 2. The Lambda function is implemented in Python and processes CloudTrail events related to IAM actions.
+# 3. Added support for attaching permission boundaries to newly created IAM Roles and Users.
+# 4. Re-applies permission boundaries if they are removed, except for actions performed by a specified admin role.
+# 5. Integrated environment variables `PERMISSION_BOUNDARY_NAME` and `ADMIN_ROLE_NAME` for customization.
+# 6. Updated the Lambda function to log all received events and exceptions in CloudWatch.
+# 7. Set a 30-second timeout for the Lambda function.
+
+AWSTemplateFormatVersion: "2010-09-09"
+Description: CloudFormation template for an event-driven Lambda function enforcing permission boundaries.
+
+Parameters:
+  PermissionBoundaryName:
+    Type: String
+    Description: Name of the permission boundary to be enforced.
+  AdminRoleName:
+    Type: String
+    Description: Name of the IAM Role allowed to delete permission boundaries without re-application.
+
+Resources:
+  LambdaExecutionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub "${AWS::StackName}-LambdaRole"
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: lambda.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole
+      Policies:
+        - PolicyName: LambdaPermissionsBoundaryPolicy
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Effect: Allow
+                Action:
+                  - iam:PutRolePermissionsBoundary
+                  - iam:PutUserPermissionsBoundary
+                Resource: "*"
+
+  PermissionBoundaryLambda:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Sub "${AWS::StackName}-PermissionBoundaryLambda"
+      Handler: index.lambda_handler
+      Runtime: python3.12
+      Role: !GetAtt LambdaExecutionRole.Arn
+      Timeout: 30
+      Environment:
+        Variables:
+          PERMISSION_BOUNDARY_NAME: !Ref PermissionBoundaryName
+          ADMIN_ROLE_NAME: !Ref AdminRoleName
+      Code:
+        ZipFile: |
+          #!/usr/bin/env python3
+          import boto3
+          import os
+          import json
+          import logging
+          from botocore.exceptions import ClientError
+
+          # Configure logging
+          logger = logging.getLogger()
+          logger.setLevel(logging.INFO)
+
+          def lambda_handler(event, context):
+              iam_client = boto3.client('iam')
+              sts_client = boto3.client('sts')
+
+              permission_boundary_name = os.getenv("PERMISSION_BOUNDARY_NAME")
+              admin_role_name = os.getenv("ADMIN_ROLE_NAME")
+
+              if not permission_boundary_name:
+                  logger.error("Environment variable PERMISSION_BOUNDARY_NAME is not set.")
+                  raise ValueError("Environment variable PERMISSION_BOUNDARY_NAME is not set.")
+
+              try:
+                  # Get the AWS Account ID
+                  account_id = sts_client.get_caller_identity()["Account"]
+
+                  # Construct the ARN for the permission boundary
+                  permission_boundary_arn = f"arn:aws:iam::{account_id}:policy/{permission_boundary_name}"
+
+                  logger.debug("Received event: %s", json.dumps(event, indent=4))
+
+                  logger.info("Starting to process event records.")
+
+                  detail = event.get('detail', {})
+                  event_name = detail.get('eventName')
+                  user_identity_arn = detail.get('userIdentity', {}).get('arn')
+                  target_name = detail.get('requestParameters', {}).get('roleName') or detail.get('requestParameters', {}).get('userName')
+
+                  if not target_name:
+                      logger.warning(f"No target name found for event {event_name}")
+                      return
+
+                  if event_name in ["CreateRole", "CreateUser"]:
+                      logger.info(f"Attaching permission boundary to {target_name} after {event_name}")
+                      try:
+                          if event_name == "CreateRole":
+                              iam_client.put_role_permissions_boundary(
+                                  RoleName=target_name,
+                                  PermissionsBoundary=permission_boundary_arn
+                              )
+                          elif event_name == "CreateUser":
+                              iam_client.put_user_permissions_boundary(
+                                  UserName=target_name,
+                                  PermissionsBoundary=permission_boundary_arn
+                              )
+                      except ClientError as e:
+                          logger.critical(f"ClientError while attaching permission boundary to {target_name}: {e.response['Error']['Message']}")
+                  elif event_name in ["DeleteRolePermissionsBoundary", "DeleteUserPermissionsBoundary"]:
+                      # Check if the admin role is performing the action
+                      if admin_role_name and admin_role_name in user_identity_arn:
+                          logger.warning(f"Action {event_name} performed by admin role {admin_role_name}, skipping boundary re-application.")
+                          return
+
+                      logger.info(f"Re-applying permission boundary to {target_name} after {event_name}")
+                      try:
+                          if event_name == "DeleteRolePermissionsBoundary":
+                              iam_client.put_role_permissions_boundary(
+                                  RoleName=target_name,
+                                  PermissionsBoundary=permission_boundary_arn
+                              )
+                          elif event_name == "DeleteUserPermissionsBoundary":
+                              iam_client.put_user_permissions_boundary(
+                                  UserName=target_name,
+                                  PermissionsBoundary=permission_boundary_arn
+                              )
+                      except ClientError as e:
+                          logger.critical(f"ClientError while re-applying permission boundary to {target_name}: {e.response['Error']['Message']}")
+              except ClientError as e:
+                  logger.critical(f"ClientError while getting account ID or processing events: {e.response['Error']['Message']}")
+              except Exception as e:
+                  logger.error(f"Unexpected error: {str(e)}")
+
+              logger.info("Finished processing event.")
+
+  PermissionBoundaryEventRule:
+    Type: AWS::Events::Rule
+    Properties:
+      EventPattern:
+        source:
+          - aws.iam
+        detail-type:
+          - AWS API Call via CloudTrail
+        detail:
+          eventName:
+            - DeleteRolePermissionsBoundary
+            - DeleteUserPermissionsBoundary
+            - PutRolePermissionsBoundary
+            - PutUserPermissionsBoundary
+            - CreateUser
+            - CreateRole
+      Targets:
+        - Arn: !GetAtt PermissionBoundaryLambda.Arn
+          Id: LambdaFunctionTarget
+      State: ENABLED
+
+  LambdaPermissionForEventBridge:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !Ref PermissionBoundaryLambda
+      Action: lambda:InvokeFunction
+      Principal: events.amazonaws.com
+      SourceArn: !GetAtt PermissionBoundaryEventRule.Arn
+
+Outputs:
+  LambdaFunctionArn:
+    Description: ARN of the Lambda function enforcing permission boundaries.
+    Value: !GetAtt PermissionBoundaryLambda.Arn
+
+  EventRuleArn:
+    Description: ARN of the EventBridge rule.
+    Value: !GetAtt PermissionBoundaryEventRule.Arn

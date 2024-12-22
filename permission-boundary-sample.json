@@ -1,0 +1,276 @@
+// Copyright 2024 Chris Farris <chris@primeharbor.com>
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+{
+    "Version": "2012-10-17",
+    "Statement": [
+        {
+            "Sid": "AllowListForAllButCloudAdmin",
+            "Effect": "Allow",
+            "NotAction": [
+                // Only the Org Admin Team can call `sts:AssumeRoot`
+                "sts:AssumeRoot",
+                // Only the Org Admin Team can mutate CloudTrail Trails
+                "cloudtrail:Put*",
+                "cloudtrail:Create*",
+                "cloudtrail:Delete*",
+                "cloudtrail:Start*",
+                "cloudtrail:Stop*",
+                "cloudtrail:Update*",
+
+                // Only the Org Admin Team can open, close, remove or
+                //  change the root email address of an account from the organization
+                // Only the Org Admin Team can enable new Organization services
+                //  or policies, or modify Delegated Admin accounts
+                // Only the Org Admin Team or the appropriate IaC Pipeline, can
+                //  modify SCPs, RCPs, and Declarative Policies.
+                "organizations:AttachPolicy",
+                "organizations:CloseAccount",
+                "organizations:Create*",
+                "organizations:Delete*",
+                "organizations:DeregisterDelegatedAdministrator",
+                "organizations:DetachPolicy",
+                "organizations:Disable*",
+                "organizations:Enable*",
+                "organizations:InviteAccountToOrganization",
+                "organizations:LeaveOrganization",
+                "organizations:MoveAccount",
+                "organizations:PutResourcePolicy",
+                "organizations:RegisterDelegatedAdministrator",
+                "organizations:RemoveAccountFromOrganization",
+                "organizations:Update*",
+                "organizations:InviteAccountToOrganization",
+
+                // Only the Org Admin or Cloud Finance team can modify
+                // ownership, billing and tax settings for the payer account
+                "account:AcceptPrimaryEmailUpdate",
+                "account:DeleteAlternateContact",
+                "account:DisableRegion",
+                "account:EnableRegion",
+                "account:PutAlternateContact",
+                "account:PutContactInformation",
+                "account:StartPrimaryEmailUpdate",
+                "aws-portal:Modify*",
+                "aws-portal:Update*",
+                "billing:PutContractInformation",
+                "billing:RedeemCredits",
+                "billing:Update*",
+                "invoicing:Create*",
+                "invoicing:Delete*",
+                "invoicing:Put*",
+                "invoicing:Update*",
+                "tax:Batch*",
+                "tax:Delete*",
+                "tax:Put*",
+                "tax:Update*",
+
+                // Only the Org Admin Team, the appropriate IaC Pipeline,
+                // SCIM, or JIT permissions tool can modify IAM Identity Center
+                //  PermissionSet, User, Group, or Account Assignment.
+                "sso:Associate*",
+                "sso:Attach*",
+                "sso:Create*",
+                "sso:Delete*",
+                "sso:Detach*",
+                "sso:Disassociate*",
+                "sso:Import*",
+                "sso:Put*",
+                "sso:Start*",
+                "sso:Update*",
+                "sso-directory:Add*",
+                "sso-directory:Complete*",
+                "sso-directory:Create*",
+                "sso-directory:Delete*",
+                "sso-directory:Disable*",
+                "sso-directory:Enable*",
+                "sso-directory:Import*",
+                "sso-directory:Remove*",
+                "sso-directory:Start*",
+                "sso-directory:Update*",
+                "sso-directory:VerifyEmail",
+                "sso-oauth:CreateTokenWithIAM",
+
+                // Only the Org Admin Team or the appropriate IaC Pipeline, can
+                // deploy or Modify Stacksets using the Delegated Admin permissions.
+                "cloudformation:ActivateOrganizationsAccess",
+                "cloudformation:CreateStackInstances",
+                "cloudformation:CreateStackSet",
+                "cloudformation:DeactivateOrganizationsAccess",
+                "cloudformation:DeleteStackInstances",
+                "cloudformation:DeleteStackSet",
+                "cloudformation:ImportStacksToStackSet",
+                "cloudformation:StopStackSetOperation",
+                "cloudformation:UpdateStackSet",
+                "cloudformation:UpdateStackInstances",
+
+                // Nobody ever ever ever can enable and use Control Tower.
+                "controltower:*",
+
+                // Housekeeping. We also need to prevent the removal or change of a
+                // permission boundary
+                "iam:DeleteRolePermissionsBoundary",
+                "iam:DeleteUserPermissionsBoundary",
+                "iam:PutRolePermissionsBoundary",
+                "iam:PutUserPermissionsBoundary"
+
+                ],
+            "Resource": ["*"]
+        },
+        {
+            // This statement is needed to explicitly permit stuff for CloudAdmin
+            // It's not 100% needed, you can get the same effect by not attaching
+            // any boundary to the CLOUDADMIN role. It's here for completeness
+            "Sid": "AllowCloudAdminEverything",
+            "Effect": "Allow",
+            "Action": ["*"],
+            "Resource": ["*"],
+            "Condition": {
+                "ArnLike": {
+                    "aws:PrincipalArn": [
+                        "arn:aws:iam::*:role/CLOUDADMIN"
+                    ]
+                }
+            }
+        },
+        {
+            // Only the Org Admin or Cloud Finance team can modify ownership,
+            //  billing and tax settings for the payer account
+            // Here we add back in these permissions, but only if the role
+            // is the CLOUD_FINANCE role
+            "Sid": "FinanceRoleAllowedServices",
+            "Effect": "Allow",
+            "Action": [
+                "account:*",
+                "aws-portal:*",
+                "billing:*",
+                "invoicing:*",
+                "tax:*"
+            ],
+            "Resource": ["*"],
+            "Condition": {
+                "ArnLike": {
+                    "aws:PrincipalArn": [
+                        "arn:aws:iam::*:role/CLOUD_FINANCE"
+                    ]
+                }
+            }
+        },
+        {
+            // Only the Org Admin Team, the appropriate IaC Pipeline, SCIM, or
+            // JIT permissions tool can modify IAM Identity Center PermissionSet,
+            // User, Group, or Account Assignment.
+            "Sid": "AllowIdentityCenterAutomation",
+            "Effect": "Allow",
+            "Action": [
+                "sso:*",
+                "sso-directory:*",
+                "sso-oauth:*"
+            ],
+            "Resource": ["*"],
+            "Condition": {
+                "ArnLike": {
+                    "aws:PrincipalArn": [
+                        "arn:aws:iam::*:role/IDENTITY_CENTER_ROLE"
+                    ]
+                }
+            }
+        },
+        {
+            // Only the Org Admin Team or the appropriate IaC Pipeline, can
+            // modify SCPs, RCPs, and Declarative Policies.
+            "Sid": "OrganizationsPipeline",
+            "Effect": "Allow",
+            "Action": [
+                "organizations:AttachPolicy",
+                "organizations:CreatePolicy",
+                "organizations:DeletePolicy",
+                "organizations:DetachPolicy",
+                "organizations:DisablePolicyType",
+                "organizations:EnablePolicyType",
+                "organizations:UpdatePolicy"
+            ],
+            "Resource": ["*"],
+            "Condition": {
+                "ArnLike": {
+                    "aws:PrincipalArn": [
+                        "arn:aws:iam::*:role/Organizations_Terraform_ROLE"
+                    ]
+                }
+            }
+        },
+        {
+            // We must explicitly permit the attachment of the Permissions Boundary
+            "Sid": "ManageBoundary",
+            "Effect": "Allow",
+            "Action": [
+                "iam:DeleteRolePermissionsBoundary",
+                "iam:DeleteUserPermissionsBoundary",
+                "iam:PutRolePermissionsBoundary",
+                "iam:PutUserPermissionsBoundary"
+            ],
+            "Resource": ["*"],
+            "Condition": {
+                "ArnLike": {
+                    "aws:PrincipalArn": [
+                        "arn:aws:iam::*:role/CLOUDADMIN",
+                        "arn:aws:iam::*:role/BOUNDARY_APPLY_LAMBDA_ROLE"
+                    ]
+                }
+            }
+        },
+        {
+            // We need to do an explicit deny here because this needs
+            // to be it's own statement due to the Resource
+            "Sid": "LimitOrgRoleAccess",
+            "Effect": "Deny",
+            "Action": ["sts:AssumeRole"],
+            "Resource": ["arn:aws:iam::*:role/OrganizationAccountAccessRole"],
+            "Condition": {
+                "ArnNotLike": {
+                    "aws:PrincipalArn": [
+                        // Exclude CLOUDADMIN from this Deny. Add your
+                        // automation roles here too if your automation
+                        //  needs to use OrganizationAccountAccessRole
+                        "arn:aws:iam::*:role/CLOUDADMIN"
+                    ]
+                }
+            }
+        },
+        {
+            // We need to do an explicit deny to prevent anyone from updating this IAM Policy
+            "Sid": "ProtectPermBoundary",
+            "Effect": "Deny",
+            "Action": [
+                "iam:CreatePolicyVersion",
+                "iam:DeletePolicy",
+                "iam:SetDefaultPolicyVersion"
+
+            ],
+            "Resource": ["arn:aws:iam::*:policy/GRAND_UNIFIED_PERMISSON_BOUNDARY"],
+            "Condition": {
+                "ArnNotLike": {
+                    "aws:PrincipalArn": [
+                        // Exclude CLOUDADMIN from this Deny. Add your
+                        // automation roles here too if your automation
+                        //  needs to use OrganizationAccountAccessRole
+                        "arn:aws:iam::*:role/CLOUDADMIN",
+                        "arn:aws:iam::*:role/BOUNDARY_APPLY_LAMBDA_ROLE"
+                    ]
+                }
+            }
+        }
+
+    // TODO I need a statement to explicitly permit the attachment of the GRAND_UNIFIED_PERMISSON_BOUNDARY
+
+    ]
+}

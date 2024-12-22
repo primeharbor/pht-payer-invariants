@@ -1,0 +1,5 @@
+CLOUDADMIN=aws-reserved/sso.amazonaws.com/AWSReservedSSO_AdministratorAccess_*
+CLOUD_FINANCE=aws-reserved/sso.amazonaws.com/AWSReservedSSO_Billing_*
+Organizations_Terraform_ROLE=OrgKickStartPipelineRole
+BOUNDARY_APPLY_LAMBDA_ROLE=InvariantEnforcerStack-LambdaRole
+GRAND_UNIFIED_PERMISSON_BOUNDARY=PayerPermissionsBoundary
